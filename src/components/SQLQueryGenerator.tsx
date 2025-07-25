@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -13,23 +13,17 @@ import {
   Loader2, 
   CheckCircle, 
   AlertCircle,
-  Settings
+  FileText,
+  Download
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { loadCSVData, executeCSVQuery, CSVData } from '@/lib/csvUtils';
 
 interface QueryResult {
   columns: string[];
   rows: any[][];
   rowCount: number;
   executionTime: number;
-}
-
-interface DatabaseConfig {
-  host: string;
-  database: string;
-  username: string;
-  password: string;
-  port: string;
 }
 
 const SQLQueryGenerator = () => {
@@ -39,25 +33,48 @@ const SQLQueryGenerator = () => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
   const [error, setError] = useState('');
-  const [showDBConfig, setShowDBConfig] = useState(false);
-  const [dbConfig, setDbConfig] = useState<DatabaseConfig>({
-    host: '',
-    database: '',
-    username: '',
-    password: '',
-    port: '5432'
-  });
+  const [showAPIConfig, setShowAPIConfig] = useState(false);
   const [llmApiKey, setLlmApiKey] = useState('');
+  const [csvData, setCsvData] = useState<CSVData | null>(null);
+  const [isLoadingCSV, setIsLoadingCSV] = useState(false);
+  const [useLocalCSV, setUseLocalCSV] = useState(false);
   
   const { toast } = useToast();
 
-  // Updated to use Supabase Edge Function
+  // Load CSV data on component mount
+  useEffect(() => {
+    loadCSVDataFromFile();
+  }, []);
+
+  const loadCSVDataFromFile = async () => {
+    setIsLoadingCSV(true);
+    try {
+      // Use sample data for better performance
+      const data = await loadCSVData('/sample_data.csv');
+      setCsvData(data);
+      toast({
+        title: "CSV Data Loaded!",
+        description: `Loaded ${data.rows.length} rows with ${data.headers.length} columns (sample data)`,
+      });
+    } catch (err) {
+      console.error('Failed to load CSV data:', err);
+      toast({
+        title: "CSV Load Failed",
+        description: "Could not load CSV data. Using server-side processing.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoadingCSV(false);
+    }
+  };
+
+  // Generate SQL using simple rules or AI
   const generateSQLQuery = async (naturalLanguage: string) => {
     setIsGenerating(true);
     setError('');
     
     try {
-      // Call the Supabase Edge Function
+      // Try to use Supabase Edge Function first
       const response = await fetch('/functions/v1/generate-sql', {
         method: 'POST',
         headers: {
@@ -68,74 +85,136 @@ const SQLQueryGenerator = () => {
         })
       });
 
-      if (!response.ok) {
-        throw new Error('Failed to generate SQL query');
+      if (response.ok) {
+        const data = await response.json();
+        
+        if (data.error) {
+          throw new Error(data.error);
+        }
+        
+        setGeneratedSQL(data.sql);
+        toast({
+          title: "SQL Generated!",
+          description: "Your natural language query has been converted to SQL",
+        });
+        return;
       }
-
-      const data = await response.json();
       
-      if (data.error) {
-        throw new Error(data.error);
-      }
-      
-      setGeneratedSQL(data.sql);
+      // Fallback to simple rule-based generation
+      const simpleSQL = generateSimpleSQL(naturalLanguage);
+      setGeneratedSQL(simpleSQL);
       toast({
-        title: "SQL Generated!",
-        description: "Your natural language query has been converted to SQL",
+        title: "SQL Generated (Local)!",
+        description: "Generated SQL using local processing",
       });
       
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to generate SQL';
-      setError(errorMessage);
-      toast({
-        title: "Generation Failed",
-        description: errorMessage,
-        variant: "destructive",
-      });
+      // Try simple rule-based generation as fallback
+      try {
+        const simpleSQL = generateSimpleSQL(naturalLanguage);
+        setGeneratedSQL(simpleSQL);
+        toast({
+          title: "SQL Generated (Fallback)!",
+          description: "Generated SQL using rule-based approach",
+        });
+      } catch (fallbackErr) {
+        const errorMessage = err instanceof Error ? err.message : 'Failed to generate SQL';
+        setError(errorMessage);
+        toast({
+          title: "Generation Failed",
+          description: errorMessage,
+          variant: "destructive",
+        });
+      }
     } finally {
       setIsGenerating(false);
     }
   };
 
-  // Updated to use Supabase Edge Function
+  // Simple rule-based SQL generation
+  const generateSimpleSQL = (query: string): string => {
+    const lowerQuery = query.toLowerCase();
+    
+    // Basic patterns
+    if (lowerQuery.includes('all') && lowerQuery.includes('data')) {
+      return 'SELECT * FROM survey_data LIMIT 100';
+    }
+    
+    if (lowerQuery.includes('total income')) {
+      return "SELECT * FROM survey_data WHERE Variable_name = 'Total income' LIMIT 50";
+    }
+    
+    if (lowerQuery.includes('agriculture') || lowerQuery.includes('farming')) {
+      return "SELECT * FROM survey_data WHERE Industry_name_NZSIOC LIKE '%Agriculture%' LIMIT 50";
+    }
+    
+    if (lowerQuery.includes('financial performance')) {
+      return "SELECT * FROM survey_data WHERE Variable_category = 'Financial performance' LIMIT 50";
+    }
+    
+    if (lowerQuery.includes('employment')) {
+      return "SELECT * FROM survey_data WHERE Variable_category = 'Employment' LIMIT 50";
+    }
+    
+    if (lowerQuery.includes('industry') && lowerQuery.includes('top')) {
+      return "SELECT Industry_name_NZSIOC, Value FROM survey_data WHERE Variable_name = 'Total income' ORDER BY CAST(Value AS DECIMAL) DESC LIMIT 10";
+    }
+    
+    // Default query
+    return 'SELECT * FROM survey_data LIMIT 20';
+  };
+
+  // Execute query using server or local CSV
   const executeQuery = async (sqlQuery: string) => {
     setIsExecuting(true);
     setError('');
     
     try {
-      // Call the Supabase Edge Function for SQL execution
-      const response = await fetch('/functions/v1/execute-sql', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          query: sqlQuery,
-          config: dbConfig
-        })
-      });
+      // Try server-side execution first
+      if (!useLocalCSV) {
+        const response = await fetch('/functions/v1/execute-sql', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            query: sqlQuery
+          })
+        });
 
-      if (!response.ok) {
-        throw new Error('Failed to execute SQL query');
+        if (response.ok) {
+          const data = await response.json();
+          
+          if (data.error) {
+            throw new Error(data.error);
+          }
+          
+          setQueryResult({
+            columns: data.columns || [],
+            rows: data.rows || [],
+            rowCount: data.rowCount || 0,
+            executionTime: data.executionTime || 0
+          });
+
+          toast({
+            title: "Query Executed!",
+            description: `Retrieved ${data.rowCount || 0} rows from server`,
+          });
+          return;
+        }
       }
-
-      const data = await response.json();
       
-      if (data.error) {
-        throw new Error(data.error);
+      // Fallback to local CSV processing
+      if (csvData) {
+        const result = executeCSVQuery(sqlQuery, csvData);
+        setQueryResult(result);
+        toast({
+          title: "Query Executed (Local)!",
+          description: `Retrieved ${result.rowCount} rows from local CSV`,
+        });
+      } else {
+        throw new Error('No CSV data available for local processing');
       }
-      
-      setQueryResult({
-        columns: data.columns || [],
-        rows: data.rows || [],
-        rowCount: data.rowCount || 0,
-        executionTime: data.executionTime || 0
-      });
-
-      toast({
-        title: "Query Executed!",
-        description: `Retrieved ${data.rowCount || 0} rows`,
-      });
       
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to execute query';
@@ -171,10 +250,12 @@ const SQLQueryGenerator = () => {
   };
 
   const exampleQueries = [
-    "Show all users who registered in the last 30 days",
-    "Find the top 10 products by sales revenue this month",
-    "Get customers with more than 5 orders",
-    "Show average order value by customer location"
+    "Show all total income data for different industries",
+    "Find financial performance data for agriculture industry",
+    "Show the top 10 industries by total income",
+    "Get all employment-related variables",
+    "Show data for Level 1 industry aggregation only",
+    "Find all variables measured in dollars (millions)"
   ];
 
   return (
@@ -186,85 +267,61 @@ const SQLQueryGenerator = () => {
             Natural Language to SQL
           </h1>
           <p className="text-xl text-muted-foreground max-w-3xl mx-auto">
-            Convert natural language queries to SQL and execute them against your database
+            Convert natural language queries to SQL and execute them against CSV data from the Annual Enterprise Survey 2024
           </p>
         </div>
 
-        {/* Configuration Section */}
+        {/* Data Source Info */}
         <Card className="p-6 bg-card border-border">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-semibold flex items-center gap-2">
-              <Settings className="w-5 h-5" />
-              Configuration
-            </h2>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setShowDBConfig(!showDBConfig)}
-            >
-              {showDBConfig ? 'Hide' : 'Show'} Settings
-            </Button>
+            <div className="flex items-center gap-2">
+              <FileText className="w-5 h-5" />
+              <h2 className="text-xl font-semibold">Data Source</h2>
+            </div>
+            <div className="flex items-center gap-2">
+              {csvData && (
+                <Badge variant="secondary" className="flex items-center gap-1">
+                  <Download className="w-3 h-3" />
+                  {csvData.rows.length} rows loaded
+                </Badge>
+              )}
+              {isLoadingCSV && (
+                <Badge variant="outline" className="flex items-center gap-1">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  Loading CSV...
+                </Badge>
+              )}
+            </div>
           </div>
-
-          {showDBConfig && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="llm-api-key">LLM API Key</Label>
-                  <Input
-                    id="llm-api-key"
-                    type="password"
-                    placeholder="Enter your LLM API key (OpenAI, Anthropic, etc.)"
-                    value={llmApiKey}
-                    onChange={(e) => setLlmApiKey(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="db-host">Database Host</Label>
-                  <Input
-                    id="db-host"
-                    placeholder="localhost or your DB host"
-                    value={dbConfig.host}
-                    onChange={(e) => setDbConfig(prev => ({ ...prev, host: e.target.value }))}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="db-name">Database Name</Label>
-                  <Input
-                    id="db-name"
-                    placeholder="your_database_name"
-                    value={dbConfig.database}
-                    onChange={(e) => setDbConfig(prev => ({ ...prev, database: e.target.value }))}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="db-username">Username</Label>
-                  <Input
-                    id="db-username"
-                    placeholder="database_user"
-                    value={dbConfig.username}
-                    onChange={(e) => setDbConfig(prev => ({ ...prev, username: e.target.value }))}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="db-password">Password</Label>
-                  <Input
-                    id="db-password"
-                    type="password"
-                    placeholder="database_password"
-                    value={dbConfig.password}
-                    onChange={(e) => setDbConfig(prev => ({ ...prev, password: e.target.value }))}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="db-port">Port</Label>
-                  <Input
-                    id="db-port"
-                    placeholder="5432"
-                    value={dbConfig.port}
-                    onChange={(e) => setDbConfig(prev => ({ ...prev, port: e.target.value }))}
-                  />
-                </div>
+          <div className="space-y-2 text-sm text-muted-foreground">
+            <p><strong>Dataset:</strong> Annual Enterprise Survey 2024 Financial Year (Provisional)</p>
+            <p><strong>Available Columns:</strong> Year, Industry_aggregation_NZSIOC, Industry_code_NZSIOC, Industry_name_NZSIOC, Units, Variable_code, Variable_name, Variable_category, Value, Industry_code_ANZSIC06</p>
+            <p><strong>Data Types:</strong> Financial performance, Employment, and other enterprise metrics</p>
+          </div>
+          
+          <div className="mt-4 flex items-center gap-4">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={useLocalCSV}
+                onChange={(e) => setUseLocalCSV(e.target.checked)}
+                className="rounded"
+              />
+              <span className="text-sm">Use local CSV processing</span>
+            </label>
+          </div>
+          
+          {showAPIConfig && (
+            <div className="mt-4 space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="llm-api-key">LLM API Key (Optional - for custom configurations)</Label>
+                <Input
+                  id="llm-api-key"
+                  type="password"
+                  placeholder="Enter your LLM API key (OpenAI, Anthropic, etc.)"
+                  value={llmApiKey}
+                  onChange={(e) => setLlmApiKey(e.target.value)}
+                />
               </div>
             </div>
           )}
@@ -280,7 +337,7 @@ const SQLQueryGenerator = () => {
               </h2>
               
               <Textarea
-                placeholder="Describe what data you want in plain English..."
+                placeholder="Describe what data you want from the enterprise survey in plain English..."
                 value={naturalLanguageQuery}
                 onChange={(e) => setNaturalLanguageQuery(e.target.value)}
                 className="min-h-[150px] resize-none bg-muted border-border focus:ring-primary"
@@ -364,7 +421,7 @@ const SQLQueryGenerator = () => {
                     ) : (
                       <>
                         <Play className="w-4 h-4 mr-2" />
-                        Execute Query
+                        Execute Query on CSV Data
                       </>
                     )}
                   </Button>

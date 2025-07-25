@@ -21,18 +21,38 @@ serve(async (req) => {
     }
 
     const schema = `
-Tables:
-- orders(id, customer_name, product, quantity, order_date, total_amount)
-- customers(id, name, email, join_date)
+CSV Data Schema:
+The data is from the Annual Enterprise Survey 2024 Financial Year (Provisional) with the following columns:
+- Year: Survey year (2024)
+- Industry_aggregation_NZSIOC: Industry aggregation level (e.g., "Level 1")
+- Industry_code_NZSIOC: Industry code 
+- Industry_name_NZSIOC: Industry name (e.g., "All industries", "Agriculture, forestry and fishing")
+- Units: Unit of measurement (e.g., "Dollars (millions)", "Number")
+- Variable_code: Variable identifier (e.g., "H01", "H04")
+- Variable_name: Variable description (e.g., "Total income", "Sales, government funding, grants and subsidies")
+- Variable_category: Category (e.g., "Financial performance", "Employment")
+- Value: The actual data value
+- Industry_code_ANZSIC06: ANZSIC06 industry classification
+
+Note: This is CSV data, so use simple SELECT statements. The table name should be treated as "survey_data".
+Available columns: Year, Industry_aggregation_NZSIOC, Industry_code_NZSIOC, Industry_name_NZSIOC, Units, Variable_code, Variable_name, Variable_category, Value, Industry_code_ANZSIC06
+
+Examples:
+- "Show all total income data" → SELECT * FROM survey_data WHERE Variable_name = 'Total income'
+- "Find agriculture industry data" → SELECT * FROM survey_data WHERE Industry_name_NZSIOC LIKE '%Agriculture%'
+- "Show financial performance variables" → SELECT * FROM survey_data WHERE Variable_category = 'Financial performance'
 `;
 
     const prompt = `
-You are an expert SQL generator. Given the database schema below, convert the English question to SQL.
+You are an expert SQL generator for CSV data analysis. Given the CSV schema below, convert the English question to a simple SQL SELECT statement.
 
 Schema:
 ${schema}
 
 Question: ${question}
+
+Generate a SQL query that works with CSV data. Use simple WHERE clauses with = or LIKE operators. Always include LIMIT 100 unless specifically asked for all data.
+
 SQL:
 `;
 
