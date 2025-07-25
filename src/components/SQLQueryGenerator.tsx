@@ -51,28 +51,20 @@ const SQLQueryGenerator = () => {
   
   const { toast } = useToast();
 
-  // PLACEHOLDER: Replace with actual LLM API call
+  // Updated to use Supabase Edge Function
   const generateSQLQuery = async (naturalLanguage: string) => {
-    if (!llmApiKey.trim()) {
-      throw new Error('LLM API key is required');
-    }
-
     setIsGenerating(true);
     setError('');
     
     try {
-      // PLACEHOLDER: Implement actual LLM API call here
-      // Example: OpenAI, Anthropic, or other LLM service
-      const response = await fetch('/api/generate-sql', {
+      // Call the Supabase Edge Function
+      const response = await fetch('/functions/v1/generate-sql', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${llmApiKey}`
         },
         body: JSON.stringify({
-          prompt: `Convert this natural language query to SQL: ${naturalLanguage}`,
-          // Add database schema context here
-          schema: "-- Add your database schema here for better results"
+          question: naturalLanguage
         })
       });
 
@@ -82,10 +74,11 @@ const SQLQueryGenerator = () => {
 
       const data = await response.json();
       
-      // PLACEHOLDER: Adjust based on your LLM API response format
-      const sqlQuery = data.sql || data.choices?.[0]?.message?.content || '';
+      if (data.error) {
+        throw new Error(data.error);
+      }
       
-      setGeneratedSQL(sqlQuery);
+      setGeneratedSQL(data.sql);
       toast({
         title: "SQL Generated!",
         description: "Your natural language query has been converted to SQL",
@@ -104,19 +97,14 @@ const SQLQueryGenerator = () => {
     }
   };
 
-  // PLACEHOLDER: Replace with actual database connection
+  // Updated to use Supabase Edge Function
   const executeQuery = async (sqlQuery: string) => {
-    if (!dbConfig.host || !dbConfig.database || !dbConfig.username) {
-      throw new Error('Database configuration is incomplete');
-    }
-
     setIsExecuting(true);
     setError('');
     
     try {
-      // PLACEHOLDER: Implement actual database connection here
-      // Example: PostgreSQL, MySQL, SQLite, etc.
-      const response = await fetch('/api/execute-sql', {
+      // Call the Supabase Edge Function for SQL execution
+      const response = await fetch('/functions/v1/execute-sql', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -133,7 +121,10 @@ const SQLQueryGenerator = () => {
 
       const data = await response.json();
       
-      // PLACEHOLDER: Adjust based on your database API response format
+      if (data.error) {
+        throw new Error(data.error);
+      }
+      
       setQueryResult({
         columns: data.columns || [],
         rows: data.rows || [],
