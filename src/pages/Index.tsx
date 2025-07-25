@@ -1,7 +1,7 @@
-import TextProcessor from '@/components/TextProcessor';
+import SQLQueryGenerator from '@/components/SQLQueryGenerator';
 
 const Index = () => {
-  return <TextProcessor />;
+  return <SQLQueryGenerator />;
 };
 
 export default Index;
